@@ -8,7 +8,7 @@
 
 点击下方链接，在 Colab 中打开 notebook：
 
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/lihualong/colab-comfyui-tools/blob/main/colab_comfyui_server.ipynb)
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/FlashCDC/colab-comfyui-tools/blob/main/colab_comfyui_server.ipynb)
 
 然后点击 **Runtime > Run all**，等待约 2-3 分钟。
 
