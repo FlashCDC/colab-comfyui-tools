@@ -1,6 +1,13 @@
 # Colab ComfyUI Tools
 
-用 Colab 免费 T4 GPU 跑 ComfyUI + AnimateDiff 生成动画视频。
+用 Colab 免费 T4 GPU 跑 AI 视频生成。
+
+支持两种模型引擎：
+
+| 引擎 | 适合 | 动作理解 | 显存 |
+|------|------|---------|------|
+| **AnimateDiff** (SD1.5) | 全局飘动/浮动效果 | ❌ | ~4GB |
+| **CogVideoX-5B** ⭐ | 具体动作（洗头、走路等） | ✅ | ~14GB |
 
 ## 快速开始
 
