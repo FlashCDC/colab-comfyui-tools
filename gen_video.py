@@ -36,14 +36,19 @@ import requests
 
 def make_workflow_i2v(image_name, prompt, negative, ckpt, motion,
                        seed, steps, cfg, denoise, width, height, frames):
-    """Build image-to-video workflow. Requires reference image."""
+    """Build image-to-video workflow.
+    
+    Fix: LoadImage -> VAEEncode -> RepeatLatentBatch -> feeds into KSampler
+    as the initial latent, so the animation starts from the template image
+    instead of random noise. AnimateDiffLoaderV1 still handles the motion.
+    """
     return {
         "3": {"class_type": "KSampler", "inputs": {
             "seed": seed, "steps": steps, "cfg": cfg,
             "denoise": denoise, "sampler_name": "euler",
             "scheduler": "normal",
             "model": ["31", 0], "positive": ["6", 0],
-            "negative": ["7", 0], "latent_image": ["29", 0]}},
+            "negative": ["7", 0], "latent_image": ["37", 0]}},  # ← FIXED: uses repeated encoded image
         "4": {"class_type": "CheckpointLoaderSimple",
               "inputs": {"ckpt_name": ckpt}},
         "6": {"class_type": "CLIPTextEncode",
@@ -67,6 +72,10 @@ def make_workflow_i2v(image_name, prompt, negative, ckpt, motion,
             "unlimited_area_hack": False}},
         "35": {"class_type": "LoadImage",
                "inputs": {"image": image_name}},
+        "36": {"class_type": "VAEEncode",                    # ← NEW: encode template image
+               "inputs": {"pixels": ["35", 0], "vae": ["4", 2]}},
+        "37": {"class_type": "RepeatLatentBatch",            # ← NEW: repeat to frame count
+               "inputs": {"samples": ["36", 0], "amount": frames}},
     }
 
 
