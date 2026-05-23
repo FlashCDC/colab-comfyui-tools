@@ -12,24 +12,15 @@ Usage:
 
     # T2V: text → video (no image)
     python gen_cogvideo.py --prompt "a cute cat walking in a garden"
-
-    # With all options
-    python gen_cogvideo.py --image input.png \
-        --prompt "gentle floating, warm colors, hand-drawn illustration" \
-        --steps 25 --cfg 6.0 --frames 49
-
-How it works:
-    1. Reads ComfyUI tunnel URL from cache or --url flag
-    2. Uploads image (I2V mode) or uses empty latent (T2V mode)
-    3. Submits CogVideoX workflow
-    4. Polls until done, downloads video
 """
 
 import argparse
 import os
+import random
 import sys
 import time
 import requests
+
 
 # --- Tunnel URL ---
 
@@ -46,46 +37,42 @@ def get_tunnel_url(args_url):
     sys.exit(1)
 
 
-# --- Workflow builders ---
+# --- Workflow builders (API-verified) ---
 
-def make_workflow_i2v(image_name, prompt, negative, seed, steps, cfg):
-    """Build CogVideoX I2V workflow."""
+def make_workflow_i2v(image_name, prompt, negative, seed, steps, cfg, frames):
     return {
         "20": {"class_type": "CLIPLoader", "inputs": {
             "clip_name": "t5/google_t5-v1_1-xxl_encoderonly-fp8_e4m3fn.safetensors",
             "type": "sd3"}},
         "30": {"class_type": "CogVideoTextEncode", "inputs": {
-            "text": prompt, "mask_type": 1, "encode_as_embedding": False,
-            "clip": ["20", 0]}},
+            "clip": ["20", 0], "prompt": prompt}},
         "31": {"class_type": "CogVideoTextEncode", "inputs": {
-            "text": negative, "mask_type": 1, "encode_as_embedding": True,
-            "clip": ["20", 0]}},
+            "clip": ["20", 0], "prompt": negative}},
         "36": {"class_type": "LoadImage", "inputs": {
             "image": image_name}},
         "37": {"class_type": "ImageResizeKJ", "inputs": {
-            "width": 720, "height": 480, "interpolation": "lanczos",
-            "keep_proportions": False, "divisible_by": 16,
+            "width": 720, "height": 480, "upscale_method": "lanczos",
+            "keep_proportion": False, "divisible_by": 16,
             "image": ["36", 0]}},
         "59": {"class_type": "DownloadAndLoadCogVideoModel", "inputs": {
-            "model_name": "THUDM/CogVideoX-5b-I2V",
-            "dtype": "fp8", "fp8_optim": "disabled",
-            "attn_mode": "sdpa", "device": "main_device"}},
+            "model": "THUDM/CogVideoX-5b-I2V",
+            "precision": "bf16", "quantization": "disabled",
+            "attention_mode": "sdpa", "load_device": "main_device",
+            "enable_sequential_cpu_offload": True}},
         "62": {"class_type": "CogVideoImageEncode", "inputs": {
-            "use_tiled_encoding": False, "tile_size": 0,
-            "images": ["37", 0], "model": ["59", 0]}},
+            "vae": ["59", 1], "start_image": ["37", 0]}},
         "63": {"class_type": "CogVideoSampler", "inputs": {
-            "seed": seed, "steps": steps, "cfg": cfg,
-            "image_cond_noise": 0, "noise_aug": "fixed",
-            "sampler_name": "CogVideoXDDIM", "denoise": 1.0,
             "model": ["59", 0], "positive": ["30", 0],
-            "negative": ["31", 0], "vae": ["59", 2],
-            "image_conditioning": ["62", 0]}},
+            "negative": ["31", 0],
+            "num_frames": frames, "steps": steps, "cfg": cfg, "seed": seed,
+            "scheduler": "CogVideoXDDIM",
+            "image_cond_latents": ["62", 0]}},
         "60": {"class_type": "CogVideoDecode", "inputs": {
-            "tiled_decoding": True, "decoder_tile_size": 240,
-            "decoder_tile_overlap": 360,
-            "vae_tiling_decoder": 0.2, "vae_tiling_encoder": 0.2,
-            "create_mask_vid": True,
-            "samples": ["63", 0], "vae": ["59", 2]}},
+            "vae": ["59", 1], "samples": ["63", 0],
+            "enable_vae_tiling": True,
+            "tile_sample_min_height": 240, "tile_sample_min_width": 360,
+            "tile_overlap_factor_height": 0.2, "tile_overlap_factor_width": 0.2,
+            "auto_tile_size": True}},
         "44": {"class_type": "VHS_VideoCombine", "inputs": {
             "frame_rate": 8, "loop_count": 0,
             "filename_prefix": "CogVideoX", "format": "video/h264-mp4",
@@ -96,36 +83,32 @@ def make_workflow_i2v(image_name, prompt, negative, seed, steps, cfg):
 
 
 def make_workflow_t2v(prompt, negative, seed, steps, cfg, frames):
-    """Build CogVideoX T2V workflow."""
     return {
         "20": {"class_type": "CLIPLoader", "inputs": {
             "clip_name": "t5/google_t5-v1_1-xxl_encoderonly-fp8_e4m3fn.safetensors",
             "type": "sd3"}},
         "30": {"class_type": "CogVideoTextEncode", "inputs": {
-            "text": prompt, "mask_type": 1, "encode_as_embedding": False,
-            "clip": ["20", 0]}},
+            "clip": ["20", 0], "prompt": prompt}},
         "31": {"class_type": "CogVideoTextEncode", "inputs": {
-            "text": negative, "mask_type": 1, "encode_as_embedding": True,
-            "clip": ["20", 0]}},
+            "clip": ["20", 0], "prompt": negative}},
         "37": {"class_type": "EmptyLatentImage", "inputs": {
             "width": 720, "height": 480, "batch_size": frames}},
         "59": {"class_type": "DownloadAndLoadCogVideoModel", "inputs": {
-            "model_name": "THUDM/CogVideoX-5b-I2V",
-            "dtype": "fp8", "fp8_optim": "disabled",
-            "attn_mode": "sdpa", "device": "main_device"}},
+            "model": "THUDM/CogVideoX-5b-I2V",
+            "precision": "bf16", "quantization": "disabled",
+            "attention_mode": "sdpa", "load_device": "main_device",
+            "enable_sequential_cpu_offload": True}},
         "63": {"class_type": "CogVideoSampler", "inputs": {
-            "seed": seed, "steps": steps, "cfg": cfg,
-            "image_cond_noise": 0, "noise_aug": "fixed",
-            "sampler_name": "CogVideoXDDIM", "denoise": 1.0,
             "model": ["59", 0], "positive": ["30", 0],
-            "negative": ["31", 0], "vae": ["59", 2],
-            "image_conditioning": ["37", 0]}},
+            "negative": ["31", 0],
+            "num_frames": frames, "steps": steps, "cfg": cfg, "seed": seed,
+            "scheduler": "CogVideoXDDIM"}},
         "60": {"class_type": "CogVideoDecode", "inputs": {
-            "tiled_decoding": True, "decoder_tile_size": 240,
-            "decoder_tile_overlap": 360,
-            "vae_tiling_decoder": 0.2, "vae_tiling_encoder": 0.2,
-            "create_mask_vid": True,
-            "samples": ["63", 0], "vae": ["59", 2]}},
+            "vae": ["59", 1], "samples": ["63", 0],
+            "enable_vae_tiling": True,
+            "tile_sample_min_height": 240, "tile_sample_min_width": 360,
+            "tile_overlap_factor_height": 0.2, "tile_overlap_factor_width": 0.2,
+            "auto_tile_size": True}},
         "44": {"class_type": "VHS_VideoCombine", "inputs": {
             "frame_rate": 8, "loop_count": 0,
             "filename_prefix": "CogVideoX", "format": "video/h264-mp4",
@@ -158,7 +141,6 @@ def submit_workflow(url, workflow):
 
 
 def poll_result(url, prompt_id, timeout=900):
-    """Poll ComfyUI history until done. Longer timeout for CogVideoX."""
     start = time.time()
     while time.time() - start < timeout:
         try:
@@ -197,24 +179,21 @@ def download_output(url, history, output_dir):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Generate video via Colab ComfyUI CogVideoX",
-        formatter_class=argparse.RawDescriptionHelpFormatter)
+        description="Generate video via Colab ComfyUI CogVideoX")
     parser.add_argument("--image", help="Input image path (I2V mode)")
     parser.add_argument("--prompt", default="gentle floating, warm colors, soft animation",
-                        help="Positive prompt describing the action")
-    parser.add_argument("--negative", default="ugly, blurry, low quality, deformed, text, watermark",
+                        help="Prompt describing the action")
+    parser.add_argument("--negative", default="ugly, blurry, low quality, deformed, text",
                         help="Negative prompt")
     parser.add_argument("--steps", type=int, default=25)
     parser.add_argument("--cfg", type=float, default=6.0)
-    parser.add_argument("--frames", type=int, default=49, help="Frames (49=~6s)")
-    parser.add_argument("--seed", type=int, default=-1, help="-1 for random")
-    parser.add_argument("--url", help="Tunnel URL (or cache)")
+    parser.add_argument("--frames", type=int, default=49, help="49=~6s")
+    parser.add_argument("--seed", type=int, default=-1)
+    parser.add_argument("--url", help="Tunnel URL")
     parser.add_argument("--output", default="./output", help="Output dir")
     args = parser.parse_args()
 
-    import random
     seed = args.seed if args.seed >= 0 else random.randint(0, 2**31)
-
     url = get_tunnel_url(args.url)
     print(f"Server: {url}")
     print(f"Seed: {seed}")
@@ -224,7 +203,7 @@ def main():
     print(f"Prompt: {args.prompt[:80]}...")
 
     duration_s = args.frames / 8
-    print(f"Generating {args.frames} frames ({duration_s:.0f}s)...")
+    print(f"Generating {args.frames} frames ({duration_s:.0f}s at 720x480)...")
 
     if mode == "I2V":
         if not os.path.exists(args.image):
@@ -233,12 +212,12 @@ def main():
         print("Uploading image...")
         image_name = upload_image(url, args.image)
         wf = make_workflow_i2v(image_name, args.prompt, args.negative,
-                               seed, args.steps, args.cfg)
+                               seed, args.steps, args.cfg, args.frames)
     else:
         wf = make_workflow_t2v(args.prompt, args.negative,
                                 seed, args.steps, args.cfg, args.frames)
 
-    print("Submitting (first run downloads model ~2min)...")
+    print("Submitting (first run downloads ~2GB model)...")
     prompt_id = submit_workflow(url, wf)
     print(f"Task: {prompt_id}")
 
